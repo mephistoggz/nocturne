@@ -1,0 +1,9 @@
+.build/
+dist/
+.DS_Store
+.swiftpm/
+*.xcodeproj/
+xcuserdata/
+# Private Google OAuth client, never commit
+Resources/GoogleOAuth.json
+TESTLER.md
