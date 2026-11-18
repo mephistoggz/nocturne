@@ -7,3 +7,5 @@ xcuserdata/
 # Private Google OAuth client, never commit
 Resources/GoogleOAuth.json
 TESTLER.md
+# Promo video project (Remotion); only the rendered video in docs/ is published
+promo/

@@ -18,6 +18,11 @@
 
 <p align="center"><a href="README.tr.md">Türkçe</a></p>
 
+<p align="center">
+  <a href="docs/promo.mp4"><img src="docs/promo.gif" width="720" alt="NOCTURNE promo video"></a><br>
+  <sub>30-second tour. <a href="docs/promo.mp4">Watch it with sound</a>.</sub>
+</p>
+
 ![NOCTURNE home screen](docs/screenshots/home.png)
 
 ## Features
@@ -127,6 +132,8 @@ NOCTURNE is an independent project. It is not affiliated with, endorsed by or sp
 ## License
 
 [MIT](LICENSE) © 2026 Burak Sarıkaya
+
+Promo video music: “Megasong” by SdiviHall, public domain (CC0), from [OpenGameArt](https://opengameart.org/content/megasong).
 
 ---
 

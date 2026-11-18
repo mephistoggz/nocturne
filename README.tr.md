@@ -4,6 +4,11 @@ macOS 14 ve üzeri için SwiftUI ve AppKit ile yazılmış müzik arşivi ve oyn
 
 [English](README.md)
 
+<p align="center">
+  <a href="docs/promo.mp4"><img src="docs/promo.gif" width="720" alt="NOCTURNE tanıtım videosu"></a><br>
+  <sub>30 saniyelik tanıtım. <a href="docs/promo.mp4">Sesli izleyin</a>.</sub>
+</p>
+
 ## Kurulum
 
 1. Depoyu indirin ve klasöründe `./Scripts/release.sh` komutunu çalıştırın.
