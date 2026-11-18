@@ -116,6 +116,7 @@ final class Playhead: ObservableObject { @Published var seconds = 0.0 }
     change { data in
       if !data.favorites.insert(track.id).inserted { data.favorites.remove(track.id) }
     }
+    account.like(track, library.favorites.contains(track.id))  // no-op unless signed in
   }
   func removeTrack(_ track: Track) {
     change { d in

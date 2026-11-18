@@ -49,15 +49,17 @@ enum MusicBrowse {
     else { return nil }
     return id
   }
-  static func track(_ id: String, _ title: String, _ by: String, _ fallback: String?, _ length: String?)
-    -> Item
-  {
+  static func track(
+    _ id: String, _ title: String, _ by: String, _ fallback: String?, _ length: String?,
+    setID: String? = nil
+  ) -> Item {
     let artist = by.components(separatedBy: " • ").first ?? ""
     let seconds = (length ?? "").split(separator: ":").reduce(0.0) { $0 * 60 + (Double($1) ?? 0) }
     return .track(
       Track(
         id: id, title: title, artist: artist.isEmpty ? fallback ?? "YouTube Music" : artist,
-        duration: seconds, cover: URL(string: "https://i.ytimg.com/vi/" + id + "/hqdefault.jpg")))
+        duration: seconds, cover: URL(string: "https://i.ytimg.com/vi/" + id + "/hqdefault.jpg"),
+        setID: setID))
   }
   static func link(_ title: String, _ subtitle: String, _ source: Any?, _ endpoint: Any?) -> Item? {
     let e = endpoint as? [String: Any]
@@ -76,7 +78,9 @@ enum MusicBrowse {
       guard let title = cols.first, !title.isEmpty else { return nil }
       let sub = cols.dropFirst().first ?? ""
       if let id = valid(first("videoId", in: r) as? String, video: true) {
-        return track(id, title, sub, artist, text(first("text", in: r["fixedColumns"])))
+        return track(
+          id, title, sub, artist, text(first("text", in: r["fixedColumns"])),
+          setID: (r["playlistItemData"] as? [String: Any])?["playlistSetVideoId"] as? String)
       }
       return link(title, sub, r, (r["navigationEndpoint"] as? [String: Any])?["browseEndpoint"])
     }
@@ -117,9 +121,9 @@ enum MusicBrowse {
     }
     return (json as? [Any])?.flatMap { items($0, artist: artist) } ?? []
   }
-  static func call(_ body: [String: Any]) async throws -> Any {
+  static func call(_ body: [String: Any], path: String = "browse") async throws -> Any {
     var r = URLRequest(
-      url: URL(string: "https://music.youtube.com/youtubei/v1/browse?prettyPrint=false")!,
+      url: URL(string: "https://music.youtube.com/youtubei/v1/" + path + "?prettyPrint=false")!,
       timeoutInterval: 15)
     r.httpMethod = "POST"
     r.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -143,7 +147,10 @@ enum MusicBrowse {
     }
     let (data, response) = try await URLSession.shared.data(for: r)
     guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-      throw Issue("YouTube Music could not load this page. It may be private or unavailable.")
+      throw Issue(
+        path == "browse"
+          ? "YouTube Music could not load this page. It may be private or unavailable."
+          : "YouTube Music did not accept this change.")
     }
     return try JSONSerialization.jsonObject(with: data)
   }
@@ -172,9 +179,10 @@ enum MusicBrowse {
 struct OnlineRows: View {
   @ObservedObject var s: Session
   let tracks: [Track]
+  var list: AccountList?  // set when the rows are a YouTube Music account playlist
   var body: some View {
     LazyVStack(alignment: .leading, spacing: 0) {
-      ForEach(Array(tracks.enumerated()), id: \.offset) { _, t in
+      ForEach(Array(tracks.enumerated()), id: \.offset) { i, t in
         Button {
           s.select(t, in: tracks)
         } label: {
@@ -191,7 +199,38 @@ struct OnlineRows: View {
             Image(systemName: "play.fill")
           }.padding(.vertical, 5).contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityIdentifier("catalog.track." + t.id)
+          .contextMenu {
+            Button(L(s.library.favorites.contains(t.id) ? "Remove favorite" : "Favorite")) {
+              if !s.library.tracks.contains(where: { $0.id == t.id }) { s.change { $0.add(t) } }
+              s.favorite(t)
+            }
+            AccountListMenu(s: s, track: t)
+            if let list, s.account.signedIn {
+              let liked = list.id == "VLLM"
+              Divider()
+              Button("Move up") { s.account.move(i, by: -1, in: list) }.disabled(
+                liked || i == 0 || t.setID == nil || tracks[max(0, i - 1)].setID == nil)
+              Button("Move down") { s.account.move(i, by: 1, in: list) }.disabled(
+                liked || i + 1 >= tracks.count || t.setID == nil
+                  || tracks[min(tracks.count - 1, i + 1)].setID == nil)
+              Button("Remove from playlist") { s.account.remove(at: i, from: list) }.disabled(
+                !liked && t.setID == nil)
+            }
+          }
         Divider()
+      }
+    }
+  }
+}
+
+/// "Add to YouTube Music playlist" entries; empty unless signed in and the track is a YouTube track.
+struct AccountListMenu: View {
+  @ObservedObject var s: Session
+  let track: Track
+  var body: some View {
+    if s.account.signedIn, track.video != nil, let lists = s.library.googleLists, !lists.isEmpty {
+      Menu("Add to YouTube Music playlist") {
+        ForEach(lists) { l in Button(l.name) { s.account.add(track, to: l) } }
       }
     }
   }

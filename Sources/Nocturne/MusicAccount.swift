@@ -31,6 +31,39 @@ extension MusicBrowse {
     WKWebsiteDataStore.default().removeData(
       ofTypes: [WKWebsiteDataTypeCookies], modifiedSince: .distantPast) {}
   }
+  // Writes to the signed-in account. These change the user's real YouTube Music library.
+  static func write(_ path: String, _ body: [String: Any]) async throws {
+    guard credentials != nil else { throw Issue("Sign in to YouTube Music first.") }
+    let json = try await call(body, path: path) as? [String: Any]
+    if let status = json?["status"] as? String, status != "STATUS_SUCCEEDED" {
+      throw Issue("YouTube Music did not accept this change.")
+    }
+  }
+  static func like(_ video: String, _ on: Bool) async throws {
+    try await write(on ? "like/like" : "like/removelike", ["target": ["videoId": video]])
+  }
+  static func edit(_ list: String, _ action: [String: Any]) async throws {
+    // Browse ids are "VL" + playlist id.
+    try await write(
+      "browse/edit_playlist", ["playlistId": String(list.dropFirst(2)), "actions": [action]])
+  }
+  static func create(_ title: String) async throws {
+    try await write(
+      "playlist/create", ["title": title, "description": "", "privacyStatus": "PRIVATE"])
+  }
+  static func addAction(_ video: String) -> [String: Any] {
+    ["action": "ACTION_ADD_VIDEO", "addedVideoId": video, "dedupeOption": "DEDUPE_OPTION_SKIP"]
+  }
+  static func removeAction(_ track: Track) -> [String: Any]? {
+    track.setID.map {
+      ["action": "ACTION_REMOVE_VIDEO", "setVideoId": $0, "removedVideoId": track.id]
+    }
+  }
+  /// Places `moved` directly before `successor`.
+  static func moveAction(_ moved: Track, before successor: Track) -> [String: Any]? {
+    guard let a = moved.setID, let b = successor.setID else { return nil }
+    return ["action": "ACTION_MOVE_VIDEO_BEFORE", "setVideoId": a, "movedSetVideoIdSuccessor": b]
+  }
   /// Every playlist in the signed-in library (including Liked Music) with its tracks.
   static func accountLists() async throws -> [AccountList] {
     let links = try await load("FEmusic_liked_playlists").sections.flatMap(\.links).filter {

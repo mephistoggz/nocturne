@@ -27,6 +27,7 @@
 - **Playlists from YouTube Music**
   - Sign in once inside the app and your library playlists (including Liked Music) are copied over and refreshed automatically.
   - Or paste any public playlist or album link (⌘L) to import it as a local playlist.
+  - While signed in, changes go back to your account: favorites become likes, and you can add, remove and reorder tracks in account playlists or create a new one.
 - **Time-synced lyrics.** Click the artwork to open Now Playing; the current line is highlighted and follows the song. Click a line to jump to it.
 - **Background playback.** Music keeps playing when the app is hidden, minimized or the video is hidden.
 - **Local audio files.** Import anything macOS can play (⌘O). Tags, artwork and duration are read with AVFoundation.
@@ -100,6 +101,7 @@ There is no bundled server and no analytics. The library lives in `~/Library/App
 - The search and browse endpoints are not an official API and can change without notice.
 - Lyrics are not available for every song, and timing can drift when the video differs from the album recording.
 - Private playlists need the in-app sign-in.
+- Deleting or renaming an account playlist is not sent to YouTube Music, and local playlists and local files stay on your Mac.
 
 ## Project layout
 

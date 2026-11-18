@@ -66,6 +66,24 @@ import WebKit
   let lines = await Lyrics.fetch(Track(id: "x", title: "Stronger", artist: "Kanye West", duration: 312))
   #expect(lines.count > 20 && lines.first?.time != nil)
 }
+@Test func accountWriteActions() throws {
+  let a = Track(id: "aaaaaaaaaaa", title: "A", artist: "x", setID: "SET_A")
+  let b = Track(id: "bbbbbbbbbbb", title: "B", artist: "x", setID: "SET_B")
+  let loose = Track(id: "ccccccccccc", title: "C", artist: "x")
+  #expect(MusicBrowse.addAction("aaaaaaaaaaa")["addedVideoId"] as? String == "aaaaaaaaaaa")
+  let remove = try #require(MusicBrowse.removeAction(a))
+  #expect(remove["setVideoId"] as? String == "SET_A" && remove["removedVideoId"] as? String == a.id)
+  #expect(MusicBrowse.removeAction(loose) == nil && MusicBrowse.moveAction(a, before: loose) == nil)
+  let move = try #require(MusicBrowse.moveAction(b, before: a))
+  #expect(move["setVideoId"] as? String == "SET_B" && move["movedSetVideoIdSuccessor"] as? String == "SET_A")
+  let row = try JSONSerialization.jsonObject(with: Data(#"""
+    {"musicResponsiveListItemRenderer":{"playlistItemData":{"videoId":"zJY8z8v0xbo","playlistSetVideoId":"56B44F6D10557CC6"},
+    "flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Garson"}]}}}]}}
+    """#.utf8))
+  #expect(MusicBrowse.items(row, artist: nil) == [.track(Track(
+    id: "zJY8z8v0xbo", title: "Garson", artist: "YouTube Music",
+    cover: URL(string: "https://i.ytimg.com/vi/zJY8z8v0xbo/hqdefault.jpg"), setID: "56B44F6D10557CC6"))])
+}
 @Test func turkishStringsParse() throws {
   let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     .appendingPathComponent("../../Resources/tr.lproj/Localizable.strings")

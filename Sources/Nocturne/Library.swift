@@ -9,6 +9,7 @@ struct Track: Identifiable, Codable, Hashable {
   var duration = 0.0
   var file: URL?
   var cover: URL?
+  var setID: String?  // this track's entry in a YouTube Music playlist; needed to remove or move it
   var video: String? { file == nil ? id : nil }
   var watch: URL {
     URL(string: "https://music.youtube.com/watch")!.appending(queryItems: [

@@ -20,7 +20,7 @@ struct CatalogView: View {
           case .accountList(let id):
             if let list = s.library.googleLists?.first(where: { $0.id == id }) {
               title(list.name)
-              onlineRows(list.tracks)
+              OnlineRows(s: s, tracks: list.tracks, list: list)
             } else {
               Text("This playlist is no longer connected.")
             }
@@ -374,6 +374,7 @@ struct CatalogView: View {
         }.disabled(l.ids.contains(t.id))
       }
     }.disabled(s.library.lists.isEmpty)
+    AccountListMenu(s: s, track: t)
     Button("View artist") { s.route = .artist(t.artist) }
     if !t.album.isEmpty { Button("View album") { s.route = .album(t.album) } }
 

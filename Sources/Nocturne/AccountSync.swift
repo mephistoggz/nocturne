@@ -36,6 +36,63 @@ import SwiftUI
     } catch { notice = error.localizedDescription }
   }
   private let signIn = MusicSignIn()
+  private var again = false
+  var signedIn: Bool { connected && MusicBrowse.credentials != nil }
+  /// Sends one change to the account, then pulls so the local copy matches what YouTube Music kept.
+  private func write(_ work: @escaping () async throws -> Void) {
+    guard signedIn else { return }
+    Task {
+      do { try await work() } catch { session?.error = error.localizedDescription }
+      if busy { again = true } else { sync() }
+    }
+  }
+  private func show(_ list: AccountList, _ tracks: [Track]) {
+    session?.change { data in
+      if let i = data.googleLists?.firstIndex(where: { $0.id == list.id }) {
+        data.googleLists?[i] = AccountList(id: list.id, name: list.name, tracks: tracks)
+      }
+    }
+  }
+  func like(_ track: Track, _ on: Bool) {
+    guard let id = track.video else { return }
+    write { try await MusicBrowse.like(id, on) }
+  }
+  func add(_ track: Track, to list: AccountList) {
+    guard signedIn, let id = track.video, !list.tracks.contains(where: { $0.id == id }) else { return }
+    show(list, list.tracks + [track])
+    write {
+      if list.id == "VLLM" { try await MusicBrowse.like(id, true) } else {
+        try await MusicBrowse.edit(list.id, MusicBrowse.addAction(id))
+      }
+    }
+  }
+  func remove(at i: Int, from list: AccountList) {
+    guard signedIn, list.tracks.indices.contains(i) else { return }
+    let track = list.tracks[i]
+    var rest = list.tracks
+    rest.remove(at: i)
+    show(list, rest)
+    write {
+      if list.id == "VLLM" { try await MusicBrowse.like(track.id, false) } else {
+        guard let action = MusicBrowse.removeAction(track) else {
+          throw Issue("YouTube Music did not accept this change.")
+        }
+        try await MusicBrowse.edit(list.id, action)
+      }
+    }
+  }
+  func move(_ i: Int, by delta: Int, in list: AccountList) {
+    let j = i + delta
+    guard signedIn, list.tracks.indices.contains(i), list.tracks.indices.contains(j),
+      // Moving down is the same as moving the next track up.
+      let action = MusicBrowse.moveAction(list.tracks[max(i, j)], before: list.tracks[min(i, j)])
+    else { return }
+    var order = list.tracks
+    order.swapAt(i, j)
+    show(list, order)
+    write { try await MusicBrowse.edit(list.id, action) }
+  }
+  func create(_ name: String) { write { try await MusicBrowse.create(name) } }
   func signInToMusic() {
     guard !busy else { return }
     signIn.start { [weak self] ok in
@@ -105,6 +162,11 @@ import SwiftUI
     work = Task {
       defer { if generation == id { busy = false } }
       do { try await pull() } catch { if !Task.isCancelled { notice = error.localizedDescription } }
+      if again, generation == id {
+        again = false
+        busy = false
+        sync()
+      }
     }
   }
   func access() async throws -> String {

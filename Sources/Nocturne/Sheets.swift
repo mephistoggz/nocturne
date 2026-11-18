@@ -86,11 +86,13 @@ struct NameList: View {
   @ObservedObject var s: Session
   let id: UUID?
   @State var name = ""
+  @State var remote = false
   @Environment(\.dismiss) var dismiss
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
       Text(L(id == nil ? "New playlist" : "Rename playlist")).font(.title2.bold())
       TextField("Playlist name", text: $name).textFieldStyle(.roundedBorder)
+      if id == nil, s.account.signedIn { Toggle("Create it in YouTube Music too", isOn: $remote) }
       HStack {
         Spacer()
         Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
@@ -100,6 +102,9 @@ struct NameList: View {
             s.change { d in
               if let i = d.lists.firstIndex(where: { $0.id == id }) { d.lists[i].name = value }
             }
+          } else if remote {
+            s.account.create(value)  // arrives as an account playlist after the sync
+            s.route = .playlists
           } else {
             let list = CollectionList(name: value)
             s.change { $0.lists.append(list) }
