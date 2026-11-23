@@ -131,7 +131,7 @@ NOCTURNE is an independent project. It is not affiliated with, endorsed by or sp
 
 ## License
 
-[MIT](LICENSE) © 2026 Burak Sarıkaya
+[MIT](LICENSE) © 2026 Mephistoggz
 
 Promo video music: “Megasong” by SdiviHall, public domain (CC0), from [OpenGameArt](https://opengameart.org/content/megasong).
 
