@@ -23,7 +23,11 @@ enum MusicBrowse {
   struct Page {
     var title: String?
     var sections: [Section]
-    var tracks: [Track] { sections.flatMap(\.tracks) }
+    var trackShelf: Int?
+    var tracks: [Track] {
+      if let trackShelf { return sections[trackShelf].tracks }
+      return sections.flatMap(\.tracks)
+    }
   }
 
   static func text(_ value: Any?) -> String? {
@@ -77,6 +81,8 @@ enum MusicBrowse {
       }
       guard let title = cols.first, !title.isEmpty else { return nil }
       let sub = cols.dropFirst().first ?? ""
+      if let endpoint = (r["navigationEndpoint"] as? [String: Any])?["browseEndpoint"],
+         let result = link(title, sub, r["thumbnail"], endpoint) { return result }
       if let id = valid(first("videoId", in: r) as? String, video: true) {
         return track(
           id, title, sub, artist, text(first("text", in: r["fixedColumns"])),
@@ -148,7 +154,7 @@ enum MusicBrowse {
     let (data, response) = try await URLSession.shared.data(for: r)
     guard (response as? HTTPURLResponse)?.statusCode == 200 else {
       throw Issue(
-        path == "browse"
+        path == "search" ? "YouTube search is unavailable." : path == "browse"
           ? "YouTube Music could not load this page. It may be private or unavailable."
           : "YouTube Music did not accept this change.")
     }
@@ -161,16 +167,25 @@ enum MusicBrowse {
     let header = first("musicResponsiveHeaderRenderer", in: json) as? [String: Any]
     let artist = text(header?["straplineTextOne"])
     var page = Page(title: text(header?["title"]), sections: sections(json, artist: artist))
-    // Playlists arrive 100 rows at a time. shortcut: stops at 3,000 tracks, raise if lists get longer.
-    for _ in 0..<30 {
-      guard !page.sections.isEmpty,
-        let token = (first("continuationCommand", in: json) as? [String: Any])?["token"] as? String
-      else { break }
+    if id.hasPrefix("MPRE") || id.hasPrefix("VL"),
+       let shelf = (first("musicPlaylistShelfRenderer", in: json) ?? first("musicShelfRenderer", in: json)) as? [String: Any] {
+      // Preserve related shelves on screen, but import only the actual track list.
+      json = ["musicShelfRenderer": shelf]
+      if let primary = sections(json, artist: artist).first {
+        page.trackShelf = page.sections.firstIndex { $0.items == primary.items }
+      }
+    }
+    var seenTokens = Set<String>()
+    while !page.sections.isEmpty,
+          let token = (first("continuationCommand", in: json) as? [String: Any])?["token"] as? String {
+      guard seenTokens.insert(token).inserted else { break }
+      if page.trackShelf == nil && seenTokens.count > 30 { break }
       try Task.checkCancellation()
       json = try await call(["continuation": token])
       let more = items(json, artist: artist)
       if more.isEmpty { break }
-      page.sections[page.sections.count - 1].items += more
+      let target = page.trackShelf ?? page.sections.count - 1
+      page.sections[target].items += more
     }
     return page
   }
@@ -183,40 +198,48 @@ struct OnlineRows: View {
   var body: some View {
     LazyVStack(alignment: .leading, spacing: 0) {
       ForEach(Array(tracks.enumerated()), id: \.offset) { i, t in
-        Button {
-          s.select(t, in: tracks)
-        } label: {
-          HStack {
-            Cover(track: t, size: 40)
-            VStack(alignment: .leading) {
-              Text(t.title).fontWeight(.medium)
-              Text(t.artist).font(.caption).foregroundStyle(.secondary)
-            }.lineLimit(1)
-            Spacer()
-            if t.duration > 0 {
-              Text(stamp(t.duration)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+        HStack(spacing: 8) {
+          Button {
+            s.select(t, in: tracks)
+          } label: {
+            HStack {
+              Cover(track: t, size: 40)
+              VStack(alignment: .leading) {
+                Text(t.title).fontWeight(.medium)
+                Text(t.artist).font(.caption).foregroundStyle(.secondary)
+              }.lineLimit(1)
+              Spacer()
+              if t.duration > 0 {
+                Text(stamp(t.duration)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+              }
+              Image(systemName: "play.fill")
+            }.padding(.vertical, 5).contentShape(Rectangle())
+          }.buttonStyle(.plain).accessibilityIdentifier("catalog.track." + t.id)
+            .contextMenu {
+              Button(L(s.library.favorites.contains(t.id) ? "Remove favorite" : "Favorite")) {
+                if !s.library.tracks.contains(where: { $0.id == t.id }) { s.change { $0.add(t) } }
+                s.favorite(t)
+              }
+              Menu("Add to local playlist") { LocalListChoices(s: s, track: t) }.disabled(s.library.lists.isEmpty)
+              AccountListMenu(s: s, track: t)
+              if let list, s.account.signedIn {
+                let liked = list.id == "VLLM"
+                Divider()
+                Button("Move up") { s.account.move(i, by: -1, in: list) }.disabled(
+                  liked || i == 0 || t.setID == nil || tracks[max(0, i - 1)].setID == nil)
+                Button("Move down") { s.account.move(i, by: 1, in: list) }.disabled(
+                  liked || i + 1 >= tracks.count || t.setID == nil
+                    || tracks[min(tracks.count - 1, i + 1)].setID == nil)
+                Button("Remove from playlist") { s.account.remove(at: i, from: list) }.disabled(
+                  !liked && t.setID == nil)
+              }
             }
-            Image(systemName: "play.fill")
-          }.padding(.vertical, 5).contentShape(Rectangle())
-        }.buttonStyle(.plain).accessibilityIdentifier("catalog.track." + t.id)
-          .contextMenu {
-            Button(L(s.library.favorites.contains(t.id) ? "Remove favorite" : "Favorite")) {
-              if !s.library.tracks.contains(where: { $0.id == t.id }) { s.change { $0.add(t) } }
-              s.favorite(t)
-            }
+          Menu {
+            LocalListChoices(s: s, track: t)
             AccountListMenu(s: s, track: t)
-            if let list, s.account.signedIn {
-              let liked = list.id == "VLLM"
-              Divider()
-              Button("Move up") { s.account.move(i, by: -1, in: list) }.disabled(
-                liked || i == 0 || t.setID == nil || tracks[max(0, i - 1)].setID == nil)
-              Button("Move down") { s.account.move(i, by: 1, in: list) }.disabled(
-                liked || i + 1 >= tracks.count || t.setID == nil
-                  || tracks[min(tracks.count - 1, i + 1)].setID == nil)
-              Button("Remove from playlist") { s.account.remove(at: i, from: list) }.disabled(
-                !liked && t.setID == nil)
-            }
-          }
+          } label: { Image(systemName: "text.badge.plus") }
+          .menuStyle(.borderlessButton).fixedSize().help("Add to playlist").accessibilityLabel("Add to playlist")
+        }
         Divider()
       }
     }
@@ -238,6 +261,7 @@ struct AccountListMenu: View {
 
 /// Explore, Charts and any playlist, album, artist or genre page reached from them.
 struct BrowsePage: View {
+  @Environment(\.playerTheme) private var theme
   @ObservedObject var s: Session
   let id: String
   var params: String?
@@ -255,10 +279,15 @@ struct BrowsePage: View {
             Image(systemName: "chevron.left").font(.title2)
           }.buttonStyle(.plain).help("Back").accessibilityLabel("Back")
         }
-        Text(L(page?.title ?? title)).font(.system(size: 33, weight: .bold)).tracking(-1.3)
+        Text(L(page?.title ?? title)).font(theme.heading(33)).tracking(-1.3)
         Spacer()
         if let page, id.hasPrefix("VL") || id.hasPrefix("MPRE"), !page.tracks.isEmpty {
-          Button("Save as playlist") { s.savePlaylist(page.title ?? title, page.tracks) }
+          Menu("Add to local playlist") {
+            ForEach(s.library.lists) { list in
+              Button(list.name) { s.change { $0.addTracks(page.tracks, to: list.id) } }
+            }
+          }.disabled(s.library.lists.isEmpty).fixedSize()
+          Button("Save as playlist") { s.savePlaylist(page.title ?? title, page.tracks, sourceID: id) }
         }
       }
       if let issue {

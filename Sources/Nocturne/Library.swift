@@ -22,6 +22,8 @@ struct CollectionList: Codable, Identifiable {
   var name: String
   var ids: [String] = []
   var takeoutKey: String?
+  var sourceID: String?
+  var starter: StarterMix?
 }
 struct SavedPage: Codable, Identifiable, Hashable {
   let url: URL
@@ -33,6 +35,10 @@ struct LibraryData: Codable {
   // Optional for compatibility with libraries created before collection links.
   var googleLists: [AccountList]?
   var googleSync: Date?
+  var installedStarterMixes: Bool?
+  var homeOrder: [String]?
+  var pinnedPlaylists: Set<String>?
+  var playlistCovers: [String: UUID]?
   var pages: [SavedPage]?
   var tracks: [Track] = []
   var favorites: Set<String> = []

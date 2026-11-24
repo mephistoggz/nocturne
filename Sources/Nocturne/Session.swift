@@ -17,8 +17,11 @@ final class Playhead: ObservableObject { @Published var seconds = 0.0 }
   static let shared = Session()
   nonisolated static let directory = FileManager.default.urls(
     for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("NOCTURNE")
+  let coversDirectory: URL
   let provider: any MusicProvider = YouTubeMusic()
   let account = AccountSync()
+  var recommendationCache: [String: (date: Date, mix: ListeningMix)] = [:]
+  var lastSuggestion: [PlaylistKey: Date] = [:]
   let head = Playhead()
   let player = AVPlayer()
   private var database: Database?
@@ -29,10 +32,14 @@ final class Playhead: ObservableObject { @Published var seconds = 0.0 }
     trail.append(route)
     route = next
   }
-  func savePlaylist(_ name: String, _ tracks: [Track]) {
+  func savePlaylist(_ name: String, _ tracks: [Track], sourceID: String? = nil) {
+    if let sourceID, let saved = library.lists.first(where: { $0.sourceID == sourceID }) {
+      open(.list(saved.id))
+      return
+    }
     var seen = Set<String>()
     let unique = tracks.filter { seen.insert($0.id).inserted }
-    let list = CollectionList(name: name, ids: unique.map(\.id))
+    let list = CollectionList(name: name, ids: unique.map(\.id), sourceID: sourceID)
     change { data in
       let known = Set(data.tracks.map(\.id))
       data.tracks += unique.filter { !known.contains($0.id) }
@@ -50,6 +57,9 @@ final class Playhead: ObservableObject { @Published var seconds = 0.0 }
   @Published var queueVisible = false
   @Published var naming = false
   @Published var editingList: UUID?
+  @Published var cropRequest: CoverCropRequest?
+  @Published var accountRemoval: AccountRemovalRequest?
+  @Published var playlistToDelete: UUID?
   @Published var adding = false
   @Published var busy = false
   @Published var query = ""
@@ -74,10 +84,16 @@ final class Playhead: ObservableObject { @Published var seconds = 0.0 }
   @Published private(set) var inlinePlayer: InlinePlayer?
   private var recentSteps: [String] = []
   init(directory: URL = Session.directory, systemCommands: Bool = true) {
+    coversDirectory = directory.appendingPathComponent("Playlist Covers", isDirectory: true)
     super.init()
     do {
       let db = try Database(at: directory.appendingPathComponent("Library.sqlite"))
-      library = try db.read()
+      var restored = try db.read()
+      if restored.installedStarterMixes != true {
+        restored.installStarterMixes()
+        try db.save(restored)
+      }
+      library = restored
       database = db
       if let id = library.selected {
         current = library.tracks.first { $0.id == id }

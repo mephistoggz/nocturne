@@ -279,8 +279,11 @@ import WebKit
   let win = NSWindow(
     contentRect: NSRect(x: 0, y: 0, width: 1050, height: 650), styleMask: [.titled, .resizable],
     backing: .buffered, defer: false)
-  win.appearance = NSAppearance(named: .darkAqua)
-  let host = NSHostingView(rootView: MainWindow(s: s).environment(\.colorScheme, .dark))
+  let theme = ProcessInfo.processInfo.environment["NOCTURNE_PREVIEW_THEME"].flatMap(PlayerTheme.init(rawValue:)) ?? .initial
+  let light = ProcessInfo.processInfo.environment["NOCTURNE_PREVIEW_LIGHT"] == "1"
+  win.appearance = NSAppearance(named: light ? .aqua : .darkAqua)
+  let host = NSHostingView(rootView: MainWindow(s: s).environment(\.playerTheme, theme)
+    .tint(theme == .classic ? nil : theme.palette.accent).environment(\.colorScheme, light ? .light : .dark))
   host.sizingOptions = []
   win.contentView = host
   win.orderFront(nil)
@@ -454,4 +457,164 @@ import WebKit
   guard ProcessInfo.processInfo.environment["NOCTURNE_LIVE_TEST"] == "1" else { return }
   let tracks = try await RecordingSearch.audioSearch("Daft Punk Get Lucky")
   #expect(tracks.contains { $0.artist == "Daft Punk" && $0.title == "Get Lucky" })
+}
+
+@Test @MainActor func starterPlaylistsAndCustomCovers() async throws {
+  let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: dir) }
+  let url = dir.appendingPathComponent("Library.sqlite")
+  let db = try Database(at: url)
+  let existing = Track(id: "MV_3Dpw-BRY", title: "My Nightcall", artist: "Kavinsky")
+  let personal = CollectionList(name: "Night Drive", ids: [existing.id])
+  var legacy = LibraryData()
+  legacy.add(existing)
+  legacy.lists = [personal]
+  try db.save(legacy)
+
+  let s = Session(directory: dir, systemCommands: false)
+  let mixes = s.library.lists.filter { $0.starter != nil }
+  #expect(mixes.map(\.name) == ["Night Drive", "Gaming", "Chill", "Focus", "Energy"])
+  #expect(mixes.allSatisfy { $0.ids.count == 2 && s.library.resolve($0.ids).count == 2 })
+  #expect(s.library.tracks.filter { $0.id == existing.id } == [existing])
+  #expect(s.library.lists.first?.id == personal.id)
+
+  let key = PlaylistKey.local(personal.id)
+  let bitmap = try #require(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 800, pixelsHigh: 400,
+    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+    bytesPerRow: 0, bitsPerPixel: 0))
+  let png = try #require(bitmap.representation(using: .png, properties: [:]))
+  let source = dir.appendingPathComponent("source.png")
+  try png.write(to: source)
+  let request = try CoverCropRequest(url: source, list: key)
+  let crop = request.rect(zoom: 1, center: CGPoint(x: 0, y: 0))
+  #expect(crop == CGRect(x: 0, y: 0, width: 400, height: 400))
+  #expect(request.rect(zoom: 2, center: CGPoint(x: 800, y: 400)) == CGRect(x: 600, y: 200, width: 200, height: 200))
+  let cover = try request.cropped(crop)
+  try s.setCover(cover, for: key)
+  let first = try #require(s.coverURL(for: key))
+  let thumbnail = try Data(contentsOf: first)
+  #expect(NSBitmapImageRep(data: thumbnail)?.pixelsWide == 400)
+  try s.setCover(cover, for: key)
+  #expect(!FileManager.default.fileExists(atPath: first.path))
+  let second = try #require(s.coverURL(for: key))
+  let starter = PlaylistKey.local(mixes[0].id)
+  try s.setCover(cover, for: starter)
+  let starterFile = try #require(s.coverURL(for: starter))
+  let reopened = Session(directory: dir, systemCommands: false)
+  #expect(reopened.coverURL(for: starter) == starterFile)
+  #expect(reopened.library.lists.first(where: { $0.id == mixes[0].id })?.starter == .nightDrive)
+  let remote = PlaylistKey.account("test")
+  try s.setCover(cover, for: remote)
+  try FileManager.default.removeItem(at: source)
+  #expect(FileManager.default.fileExists(atPath: second.path))
+  for mix in mixes { s.deletePlaylist(mix.id) }
+  #expect(!FileManager.default.fileExists(atPath: starterFile.path))
+  let restored = Session(directory: dir, systemCommands: false)
+  #expect(restored.library.lists.map(\.id) == [personal.id])
+  #expect(restored.coverURL(for: key) == second)
+  #expect(restored.coverURL(for: remote) != nil)
+  restored.deletePlaylist(personal.id)
+  #expect(!FileManager.default.fileExists(atPath: second.path))
+  #expect(try db.read().lists.isEmpty)
+  #expect(try db.read().tracks.contains(existing))
+}
+
+@Test @MainActor func playlistEditingAndPersonalization() throws {
+  let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: dir) }
+  let session = Session(directory: dir, systemCommands: false)
+  let mixes = session.library.lists
+  let first = mixes[0], second = mixes[1], third = mixes[2]
+  let track = Track(id: "example1234", title: "A result from Search", artist: "Example Artist")
+  #expect(ListeningMix.seeds(in: session.library).isEmpty)
+  session.change { data in
+    data.addTracks([track, track], to: first.id)
+    data.addTracks([track], to: second.id)
+    data.movePlaylist(PlaylistKey.local(third.id).key, relativeTo: PlaylistKey.local(first.id).key, after: false)
+    data.togglePin(PlaylistKey.local(second.id).key)
+  }
+  #expect(session.library.homePlaylists.prefix(2).map(\.id) == [.local(second.id), .local(third.id)])
+  #expect(session.library.tracks.filter { $0.id == track.id }.count == 1)
+  let songs = session.library.playlistTracks(.local(first.id)) + session.library.playlistTracks(.local(second.id))
+  session.savePlaylist("Merged", songs)
+  let merged = try #require(session.library.lists.last)
+  #expect(merged.ids == first.ids + [track.id] + second.ids)
+  #expect(session.library.lists.first?.ids == first.ids + [track.id])
+  session.savePlaylist("Online album", [track], sourceID: "MPREtest")
+  session.savePlaylist("Same album", [track], sourceID: "MPREtest")
+  #expect(session.library.lists.filter { $0.sourceID == "MPREtest" }.count == 1)
+  session.change { $0.history = [track.id, first.ids[0]] }
+  let restored = Session(directory: dir, systemCommands: false)
+  #expect(restored.library.homePlaylists.prefix(2).map(\.id) == [.local(second.id), .local(third.id)])
+  #expect(ListeningMix.seeds(in: restored.library).map(\.id) == [track.id, first.ids[0]])
+}
+
+@Test @MainActor func livePersonalizedDiscovery() async throws {
+  guard ProcessInfo.processInfo.environment["NOCTURNE_DISCOVERY_TEST"] == "1" else { return }
+  let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: dir) }
+  let s = Session(directory: dir, systemCommands: false)
+  for kind in [SearchKind.albums, .playlists] {
+    let links = try await MusicBrowse.searchCollections("Daft Punk", kind: kind)
+    let link = try #require(links.first)
+    let page = try await MusicBrowse.load(link.id)
+    #expect(!page.tracks.isEmpty)
+    s.savePlaylist(link.title, page.tracks, sourceID: link.id)
+    #expect(s.library.lists.last?.ids.first == page.tracks.first?.id)
+  }
+  let seed = StarterMix.nightDrive.tracks[0]
+  let mix = await ListeningMix.load(seed)
+  #expect(!mix.related.isEmpty && !mix.playlists.isEmpty)
+  #expect(!mix.related.map(\.id).contains(seed.id))
+}
+
+@Test func playlistDropPositions() {
+  var library = LibraryData()
+  let lists = ["A", "B", "C", "D"].map { CollectionList(name: $0) }
+  library.lists = lists
+  let keys = lists.map { PlaylistKey.local($0.id).key }
+  library.movePlaylist(keys[0], relativeTo: keys[2], after: false)
+  #expect(library.homePlaylists.map(\.name) == ["B", "A", "C", "D"])
+  library.movePlaylist(keys[1], relativeTo: keys[3], after: true)
+  #expect(library.homePlaylists.map(\.name) == ["A", "C", "D", "B"])
+  library.movePlaylist(keys[3], relativeTo: keys[0], after: false)
+  #expect(library.homePlaylists.map(\.name) == ["D", "A", "C", "B"])
+  library.togglePin(keys[3])
+  library.movePlaylist(keys[1], relativeTo: keys[3], after: false)
+  #expect(library.homePlaylists.map(\.name) == ["B", "D", "A", "C"])
+}
+
+@Test func accountPlaylistRemovalTargets() async throws {
+  let id = "PLexample1234"
+  let editable = ["musicEditablePlaylistDetailHeaderRenderer": ["playlistId": id]]
+  let followed: [String: Any] = ["musicResponsiveHeaderRenderer": ["buttons": [
+    ["musicPlayButtonRenderer": ["playNavigationEndpoint": ["watchPlaylistEndpoint": ["playlistId": id]]]]
+  ]]]
+  #expect(AccountRemovalKind.playlistID("VL" + id) == id)
+  #expect(AccountRemovalKind.playlistID("VLLM") == nil)
+  #expect(throws: Issue.self) { try AccountRemovalKind.resolve(editable, playlistID: "PLother") }
+  #expect(throws: Issue.self) { try AccountRemovalKind.resolve([:], playlistID: id) }
+  let deletion = try AccountRemovalKind.resolve(editable, playlistID: id)
+  let unsave = try AccountRemovalKind.resolve(followed, playlistID: id)
+  #expect(deletion == .delete && unsave == .unsave)
+  var writes = 0
+  try await deletion.send(id) { path, body in
+    writes += 1
+    #expect(path == "playlist/delete" && body["playlistId"] as? String == id)
+  }
+  try await unsave.send(id) { path, body in
+    writes += 1
+    #expect(path == "like/removelike" && (body["target"] as? [String: String])?["playlistId"] == id)
+  }
+  #expect(writes == 2)
+}
+
+@Test @MainActor func classicDefaultAndFourOptionalThemeArtworks() throws {
+  #expect(PlayerTheme.initial == .classic)
+  #expect(PlayerTheme.additionalThemes.map(\.rawValue) == ["miku", "aero", "tokyo", "jazz"])
+  for theme in PlayerTheme.additionalThemes {
+    let image = try #require(ThemeImages.images[theme])
+    #expect(image.size.width > image.size.height)
+    #expect(PlayerTheme(rawValue: theme.rawValue) == theme)
+  }
 }

@@ -14,6 +14,7 @@ done
 lipo -create "$tmp/x86_64" "$tmp/arm64" -output "$app/Contents/MacOS/Nocturne"
 cp Resources/Info.plist "$app/Contents/"
 cp Resources/Nocturne.icns "$app/Contents/Resources/"
+cp -R Sources/Nocturne/ThemeArt "$app/Contents/Resources/"
 cp -R Resources/*.lproj "$app/Contents/Resources/"
 if [[ -f Resources/GoogleOAuth.json ]]; then cp Resources/GoogleOAuth.json "$app/Contents/Resources/"; fi
 codesign --force --sign - "$app"

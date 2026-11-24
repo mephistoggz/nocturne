@@ -1,15 +1,19 @@
 import SwiftUI
 
 struct CatalogView: View {
+  @Environment(\.playerTheme) private var theme
   @ObservedObject var s: Session
   @FocusState private var field: Bool
   @State private var searchTerm = ""
+  @State private var searchKind: SearchKind = .songs
+  @State private var collections: [MusicBrowse.Link] = []
   @State private var onlineResults: [Track] = []
   @State private var searching = false
   @State private var searchIssue: String?
   @State private var requestID = UUID()
   @State private var filter = ""
   @State private var category = "All"
+  @State private var merging = false
   @State private var pendingRemoval: Track?
   var body: some View {
     ScrollViewReader { proxy in
@@ -19,8 +23,9 @@ struct CatalogView: View {
           switch s.route {
           case .accountList(let id):
             if let list = s.library.googleLists?.first(where: { $0.id == id }) {
-              title(list.name)
+              playlistHeader(list.name, key: .account(list.id))
               OnlineRows(s: s, tracks: list.tracks, list: list)
+              PlaylistSuggestions(s: s, key: .account(id), tracks: list.tracks)
             } else {
               Text("This playlist is no longer connected.")
             }
@@ -38,11 +43,9 @@ struct CatalogView: View {
           case .playlists:
             title("Playlists")
             AccountControls(sync: s.account, last: s.library.googleSync)
-            ForEach(s.library.googleLists ?? []) { l in
-              tile(
-                l.name, "arrow.triangle.2.circlepath",
-                "Google · " + String(l.tracks.count) + " " + L("tracks")
-              ) { s.route = .accountList(l.id) }
+            HStack {
+              Button("Link YouTube Music playlist…") { s.adding = true }
+              Button("Import Takeout playlists…") { s.importTakeout() }
             }
             playlistShelf
             savedPages("Playlist")
@@ -71,8 +74,10 @@ struct CatalogView: View {
             rows(s.library.resolve(s.library.history))
           case .list(let id):
             if let list = s.library.lists.first(where: { $0.id == id }) {
-              title(list.name)
-              rows(s.library.resolve(list.ids), list: list)
+              playlistHeader(list.name, key: .local(list.id), starter: list.starter)
+              let tracks = s.library.resolve(list.ids)
+              rows(tracks, list: list)
+              PlaylistSuggestions(s: s, key: .local(id), tracks: tracks)
             }
           }
         }.padding(.horizontal, 28).padding(.bottom, 28).frame(
@@ -82,6 +87,7 @@ struct CatalogView: View {
         field = route == .search
       }
     }.background(Backdrop())
+      .sheet(isPresented: $merging) { MergePlaylistsSheet(s: s) }
       .alert(
         "Remove this track from your library?",
         isPresented: Binding(
@@ -99,39 +105,55 @@ struct CatalogView: View {
       }
   }
   func title(_ value: String) -> some View {
-    Text(L(value)).font(.system(size: 33, weight: .bold)).tracking(-1.3).textSelection(.enabled)
+    Text(L(value)).font(theme.heading(33)).tracking(-1.3).textSelection(.enabled)
+  }
+  private var searchMusicButton: some View {
+    Button { s.route = .search } label: {
+      Label("Search music", systemImage: "magnifyingglass").padding(.horizontal, 7)
+    }
   }
   var home: some View {
     Group {
       title("Home")
       ZStack(alignment: .leading) {
-        Color(white: 0.095)
-        GeometryReader { geo in
-          Pressing().frame(width: 350, height: 350).rotationEffect(.degrees(-9)).position(
-            x: geo.size.width * 0.86, y: geo.size.height * 0.62)
-        }
-        LinearGradient(
-          stops: [
-            .init(color: Color(white: 0.095), location: 0),
-            .init(color: Color(white: 0.095).opacity(0.98), location: 0.38),
-            .init(color: .clear, location: 0.76),
+        if theme == .classic {
+          Color(white: 0.095)
+          GeometryReader { geo in
+            Pressing().frame(width: 350, height: 350).rotationEffect(.degrees(-9)).position(
+              x: geo.size.width * 0.86, y: geo.size.height * 0.62)
+          }
+          LinearGradient(
+            stops: [
+              .init(color: Color(white: 0.095), location: 0),
+              .init(color: Color(white: 0.095).opacity(0.98), location: 0.38),
+              .init(color: .clear, location: 0.76),
+            ], startPoint: .leading, endPoint: .trailing)
+        } else {
+          ThemeArtwork(theme: theme)
+          LinearGradient(stops: [
+            .init(color: theme.heroBase.opacity(0.98), location: 0),
+            .init(color: theme.heroBase.opacity(0.93), location: 0.32),
+            .init(color: theme.heroBase.opacity(0.18), location: 0.67),
+            .init(color: .clear, location: 0.87)
           ], startPoint: .leading, endPoint: .trailing)
+        }
         VStack(alignment: .leading, spacing: 12) {
-          Label("YOUTUBE MUSIC", systemImage: "play.circle").font(
+          Label("YOUTUBE MUSIC", systemImage: theme == .classic ? "play.circle" : theme.symbol).font(
             .system(size: 10, weight: .semibold)
           ).tracking(2)
-          Text("The Listening Room").font(.system(size: 37, weight: .medium, design: .serif))
+          Text("The Listening Room").font(theme == .classic ? .system(size: 37, weight: .medium, design: .serif) : theme.heading(37))
             .tracking(-1.5)
-          Text("Find music and save your favorite tracks.").font(.callout).foregroundStyle(.silver)
-          Button {
-            s.route = .search
-          } label: {
-            Label("Search music", systemImage: "magnifyingglass").padding(.horizontal, 7)
+          Text("Find music and save your favorite tracks.").font(.callout).foregroundStyle(theme == .classic ? Color(white: 0.76) : theme.heroInk.opacity(0.88))
+          Group {
+            if theme == .classic { searchMusicButton }
+            else { searchMusicButton.buttonStyle(.borderedProminent).tint(theme.heroBase).foregroundStyle(theme.heroInk) }
           }.controlSize(.large).padding(.top, 3)
-        }.padding(25).foregroundStyle(.white)
-      }.frame(height: 212).clipShape(RoundedRectangle(cornerRadius: 14))
+        }.padding(25).foregroundStyle(theme.heroInk)
+      }.frame(height: theme == .classic ? 184 : 194).clipShape(RoundedRectangle(cornerRadius: theme == .classic ? 14 : theme.radius))
+      playlistShelf
+      HomeRecommendations(s: s)
       HStack {
-        Text("Your library").font(.title2.bold())
+        Text("Your library").font(theme == .classic ? .title2.bold() : theme.heading(22))
         Spacer()
         if s.busy { ProgressView().controlSize(.small) }
       }
@@ -143,19 +165,16 @@ struct CatalogView: View {
         }
       }
       if !s.library.history.isEmpty {
-        Text("Recently played").font(.title2.bold())
+        Text("Recently played").font(theme == .classic ? .title2.bold() : theme.heading(22))
         cards(s.library.resolve(s.library.history))
       } else {
-        Text("Build your collection").font(.title2.bold())
+        Text("Build your collection").font(theme == .classic ? .title2.bold() : theme.heading(22))
         HStack {
           Button("Add YouTube link…") { s.adding = true }
           Button("Import audio files…") { s.importFiles() }
         }
       }
-      if !s.library.lists.isEmpty {
-        Text("Your playlists").font(.title2.bold())
-        playlistShelf
-      }
+
     }
   }
   func tile(_ name: String, _ icon: String, _ detail: String, action: @escaping () -> Void)
@@ -163,11 +182,11 @@ struct CatalogView: View {
   {
     Button(action: action) {
       VStack(alignment: .leading, spacing: 9) {
-        Image(systemName: icon).font(.title3).foregroundStyle(.secondary)
+        Image(systemName: icon).font(.title3).foregroundStyle(theme == .classic ? Color.secondary : theme.palette.accent)
         Text(L(name)).font(.headline)
         Text(L(detail)).font(.caption).foregroundStyle(.secondary)
       }.frame(maxWidth: .infinity, alignment: .leading).padding(15).background(
-        .primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 9))
+        theme.palette.card, in: RoundedRectangle(cornerRadius: theme == .classic ? 9 : theme.radius))
     }.buttonStyle(.plain)
   }
   func cards(_ tracks: [Track]) -> some View {
@@ -204,16 +223,45 @@ struct CatalogView: View {
     }
   }
   var playlistShelf: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Button("Link YouTube Music playlist…") { s.adding = true }
-      Button("Import Takeout playlists…") { s.importTakeout() }
-      Button("New playlist…") {
-        s.editingList = nil
+    let lists = s.library.homePlaylists
+    return VStack(alignment: .leading, spacing: 14) {
+      HStack {
+        Text("Your playlists").font(theme == .classic ? .title2.bold() : theme.heading(22))
+        Spacer()
+        if lists.count >= 2 { Button("Merge playlists") { merging = true } }
+        Button("New playlist…") {
+          s.editingList = nil
+          s.naming = true
+        }
+      }
+      PlaylistGrid(s: s, lists: lists) { playlistActions($0) }
+    }
+  }
+
+  func playlistHeader(_ name: String, key: PlaylistKey, starter: StarterMix? = nil) -> some View {
+    HStack(spacing: 18) {
+      PlaylistCover(starter: starter, url: s.coverURL(for: key)).frame(width: 112)
+      VStack(alignment: .leading, spacing: 10) {
+        Text(verbatim: name).font(.largeTitle.bold()).textSelection(.enabled)
+        Menu("Playlist options") { playlistActions(key) }.fixedSize()
+      }
+    }
+  }
+
+  @ViewBuilder func playlistActions(_ key: PlaylistKey) -> some View {
+    Button("Choose cover image…") { s.chooseCover(for: key) }
+    Button(L(s.library.pinnedPlaylists?.contains(key.key) == true ? "Unpin from top" : "Pin to top")) {
+      s.change { $0.togglePin(key.key) }
+    }
+    if case .account(let id) = key, let list = s.library.googleLists?.first(where: { $0.id == id }) {
+      AccountRemovalMenu(account: s.account, list: list)
+    }
+    if case .local(let id) = key {
+      Button("Rename…") {
+        s.editingList = id
         s.naming = true
       }
-      ForEach(s.library.lists) { l in
-        tile(l.name, "music.note.list", "\(l.ids.count) " + L("tracks")) { s.route = .list(l.id) }
-      }
+      Button("Delete…", role: .destructive) { s.playlistToDelete = id }
     }
   }
   var search: some View {
@@ -224,13 +272,14 @@ struct CatalogView: View {
         TextField("Search music, artists, albums, or playlists", text: $s.query).textFieldStyle(
           .plain
         ).focused($field).onSubmit { searchMusic() }
-      }.padding(12).background(.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+      }.padding(12).background(theme == .classic ? Color.primary.opacity(0.07) : theme.palette.card, in: RoundedRectangle(cornerRadius: theme == .classic ? 8 : theme.radius))
         .task(id: s.query) {
           do {
             try await Task.sleep(for: .milliseconds(240))
             filter = s.query.trimmingCharacters(in: .whitespacesAndNewlines)
-            if filter.isEmpty {
+            if filter.isEmpty || (filter.count < 2 && filter != searchTerm) {
               searchTerm = ""
+              collections = []
               onlineResults = []
               searching = false
               searchIssue = nil
@@ -252,22 +301,35 @@ struct CatalogView: View {
         }
       }
       VStack(alignment: .leading, spacing: 10) {
+        Picker("YouTube results", selection: $searchKind) {
+          ForEach(SearchKind.allCases, id: \.self) { kind in Text(L(kind.rawValue)).tag(kind) }
+        }.pickerStyle(.segmented)
+          .onChange(of: searchKind) { _, _ in searchMusic(remember: false) }
         if searching { ProgressView("Searching music…").controlSize(.small) }
         if let searchIssue { Text(searchIssue).foregroundStyle(.secondary) }
         if !searchTerm.isEmpty {
           Text("YouTube results").font(.headline)
-          if !searching && searchIssue == nil && onlineResults.isEmpty {
+          if !searching && searchIssue == nil && onlineResults.isEmpty && collections.isEmpty {
             Text("No results found.").foregroundStyle(.secondary)
           }
-          onlineRows(onlineResults)
+          if searchKind == .songs { onlineRows(onlineResults) }
+          else {
+            ForEach(collections, id: \.id) { link in CollectionResultRow(s: s, link: link) }
+          }
         }
       }.task(id: requestID) {
         let term = searchTerm
         guard !term.isEmpty else { return }
         do {
-          let found = try await RecordingSearch.search(term)
-          try Task.checkCancellation()
-          onlineResults = found
+          if searchKind == .songs {
+            let found = try await RecordingSearch.search(term)
+            try Task.checkCancellation()
+            onlineResults = found
+          } else {
+            let found = try await MusicBrowse.searchCollections(term, kind: searchKind)
+            try Task.checkCancellation()
+            collections = found
+          }
           searching = false
         } catch {
           if !Task.isCancelled {
@@ -277,7 +339,7 @@ struct CatalogView: View {
         }
       }
       if !filter.isEmpty {
-        Text("Library results").font(.title2.bold())
+        Text("Library results").font(theme == .classic ? .title2.bold() : theme.heading(22))
         Picker("Category", selection: $category) {
           ForEach(["All", "Songs", "Albums", "Artists", "Playlists"], id: \.self) { Text(L($0)) }
         }.pickerStyle(.segmented).labelsHidden()
@@ -303,6 +365,7 @@ struct CatalogView: View {
     guard !q.isEmpty else { return }
     if remember { s.recordSearch(q) }
     searchTerm = q
+    collections = []
     onlineResults = []
     searchIssue = nil
     searching = true
@@ -363,16 +426,7 @@ struct CatalogView: View {
     Button("Add to queue") { s.queue.append(t) }.disabled(s.queue.contains(t))
     Button(L(s.library.favorites.contains(t.id) ? "Remove favorite" : "Favorite")) { s.favorite(t) }
     Menu("Add to playlist") {
-      ForEach(s.library.lists) { l in
-        Button(l.name) {
-          s.change { d in
-            if let i = d.lists.firstIndex(where: { $0.id == l.id }), !d.lists[i].ids.contains(t.id)
-            {
-              d.lists[i].ids.append(t.id)
-            }
-          }
-        }.disabled(l.ids.contains(t.id))
-      }
+      LocalListChoices(s: s, track: t)
     }.disabled(s.library.lists.isEmpty)
     AccountListMenu(s: s, track: t)
     Button("View artist") { s.route = .artist(t.artist) }

@@ -195,12 +195,72 @@ import SwiftUI
     }
     notice = session.library.googleSync == now ? nil : L("Could not save the updated playlists.")
   }
+  func prepareRemoval(_ list: AccountList) {
+    guard signedIn, !busy, let remoteID = AccountRemovalKind.playlistID(list.id) else { return }
+    let version = generation
+    busy = true
+    work = Task {
+      defer { finishRemovalWork(version) }
+      do {
+        let json = try await MusicBrowse.call(["browseId": "VL" + remoteID])
+        let kind = try AccountRemovalKind.resolve(json, playlistID: remoteID)
+        try Task.checkCancellation()
+        guard generation == version, signedIn else { return }
+        session?.accountRemoval = AccountRemovalRequest(list: list, remoteID: remoteID, kind: kind, generation: version)
+      } catch { if !Task.isCancelled { session?.error = error.localizedDescription } }
+    }
+  }
+
+  func confirmRemoval(_ request: AccountRemovalRequest) {
+    guard request.generation == generation, signedIn, let session,
+          session.library.googleLists?.contains(where: { $0.id == request.list.id }) == true else { return }
+    guard !busy else {
+      session.error = L("Sync is running. Try again when it finishes.")
+      return
+    }
+    busy = true
+    work = Task {
+      defer { finishRemovalWork(request.generation) }
+      do {
+        try await request.kind.send(request.remoteID)
+        try Task.checkCancellation()
+        guard generation == request.generation else { return }
+        let links = try await MusicBrowse.load("FEmusic_liked_playlists").sections.flatMap(\.links)
+        guard links.contains(where: { $0.id.hasPrefix("VL") }),
+              !links.contains(where: { $0.id == "VL" + request.remoteID }) else {
+          throw Issue("YouTube Music has not confirmed the removal. Sync again to check.")
+        }
+        try Task.checkCancellation()
+        guard generation == request.generation else { return }
+        let key = PlaylistKey.account(request.list.id)
+        let cover = session.coverURL(for: key)
+        session.change {
+          $0.googleLists?.removeAll { $0.id == request.list.id }
+          $0.playlistCovers?.removeValue(forKey: key.key)
+          $0.homeOrder?.removeAll { $0 == key.key }
+          $0.pinnedPlaylists?.remove(key.key)
+        }
+        guard session.library.googleLists?.contains(where: { $0.id == request.list.id }) != true else { return }
+        if let cover { try? FileManager.default.removeItem(at: cover) }
+        session.trail.removeAll { $0 == .accountList(request.list.id) }
+        if session.route == .accountList(request.list.id) { session.route = .playlists }
+        again = true
+      } catch { if !Task.isCancelled { session.error = error.localizedDescription } }
+    }
+  }
+
+  private func finishRemovalWork(_ version: UUID) {
+    guard generation == version else { return }
+    busy = false
+    if again { again = false; sync() }
+  }
   func disconnect() {
     do { try GrantStore.clear() } catch {
       notice = error.localizedDescription
       return
     }
     generation = UUID()
+    session?.accountRemoval = nil
     work?.cancel()
     schedule?.cancel()
     grant = nil

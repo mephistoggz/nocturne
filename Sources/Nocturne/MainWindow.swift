@@ -3,10 +3,9 @@ import SwiftUI
 struct MainWindow: View {
   @ObservedObject var s: Session
   @AppStorage("sidebar") var sidebar = true
-  @AppStorage("appearance") var appearance = "Dark"
+  @Environment(\.playerTheme) private var theme
   @AppStorage("showVideo") var showVideo = false
   @Environment(\.accessibilityReduceMotion) var reduce
-  @State private var deleteID: UUID?
   var body: some View {
     VStack(spacing: 0) {
       HStack(spacing: 0) {
@@ -70,6 +69,7 @@ struct MainWindow: View {
     }
     .animation(reduce ? nil : .easeOut(duration: 0.18), value: s.expanded)
     .sheet(isPresented: $s.adding) { AddLink(s: s) }
+    .sheet(item: $s.cropRequest) { CropCoverSheet(s: s, request: $0) }
     .sheet(isPresented: $s.naming) { NameList(s: s, id: s.editingList) }
     .alert(
       "NOCTURNE", isPresented: Binding(get: { s.error != nil }, set: { if !$0 { s.error = nil } })
@@ -80,19 +80,26 @@ struct MainWindow: View {
     }
     .alert(
       "Delete this playlist?",
-      isPresented: Binding(get: { deleteID != nil }, set: { if !$0 { deleteID = nil } })
+      isPresented: Binding(get: { s.playlistToDelete != nil }, set: { if !$0 { s.playlistToDelete = nil } })
     ) {
       Button("Delete", role: .destructive) {
-        let id = deleteID
-        s.change { $0.lists.removeAll { $0.id == id } }
-        s.route = .playlists
-        deleteID = nil
+        if let id = s.playlistToDelete { s.deletePlaylist(id) }
+        s.playlistToDelete = nil
       }
       Button("Cancel", role: .cancel) {}
     } message: {
       Text("The songs will stay in your library.")
     }
-    .preferredColorScheme(appearance == "System" ? nil : appearance == "Dark" ? .dark : .light)
+    .alert(Text(s.accountRemoval?.list.name ?? ""),
+      isPresented: Binding(get: { s.accountRemoval != nil }, set: { if !$0 { s.accountRemoval = nil } }),
+      presenting: s.accountRemoval
+    ) { request in
+      Button(L(request.kind.button), role: .destructive) { s.account.confirmRemoval(request) }
+      Button("Cancel", role: .cancel) {}
+    } message: { request in Text(L(request.kind.warning)) }
+    .toolbarBackground(theme == .classic ? AnyShapeStyle(.bar) : AnyShapeStyle(theme.palette.panel), for: .windowToolbar)
+    .toolbarBackground(theme == .classic ? .automatic : .visible, for: .windowToolbar)
+    .background(theme == .classic ? Color.clear : theme.palette.canvas)
     .background(WindowHook(s: s))
   }
   var catalogURL: URL? {
@@ -105,8 +112,8 @@ struct MainWindow: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 3) {
         HStack(spacing: 9) {
-          Image(systemName: "waveform").font(.title2)
-          Text("NOCTURNE").font(.system(size: 14, weight: .bold)).tracking(2)
+          Image(systemName: theme.symbol).font(.title2).foregroundStyle(theme == .classic ? Color.primary : theme.palette.accent)
+          Text("NOCTURNE").font(theme.heading(14)).tracking(2)
         }.padding(.bottom, 19)
         group("Discover")
         nav("Home", "house", .home)
@@ -130,6 +137,7 @@ struct MainWindow: View {
         }.padding(.top, 5)
         ForEach(s.library.googleLists ?? []) { list in
           nav(list.name, "arrow.triangle.2.circlepath", .accountList(list.id))
+            .contextMenu { AccountRemovalMenu(account: s.account, list: list) }
         }
         ForEach((s.library.pages ?? []).filter { $0.kind == "Playlist" }) { page in
           nav(page.name, "link", .online(page.url))
@@ -149,14 +157,14 @@ struct MainWindow: View {
               s.editingList = list.id
               s.naming = true
             }
-            Button("Delete…", role: .destructive) { deleteID = list.id }
+            Button("Delete…", role: .destructive) { s.playlistToDelete = list.id }
           }
         }
       }.padding(.horizontal, 12).padding(.vertical, 18)
-    }.background(.ultraThinMaterial)
+    }.background(ThemePanel(classicBackground: AnyShapeStyle(.ultraThinMaterial)))
   }
   func group(_ name: String) -> some View {
-    Text(L(name)).font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.top, 12)
+    Text(L(name)).font(.caption.weight(.semibold)).foregroundStyle(theme.palette.detail).padding(.top, 12)
       .padding(.bottom, 4).padding(.leading, 8)
   }
   func nav(_ name: String, _ symbol: String, _ route: Route) -> some View {
@@ -165,30 +173,32 @@ struct MainWindow: View {
       s.route = route
     } label: {
       HStack(spacing: 10) {
-        Image(systemName: symbol).frame(width: 18)
+        Image(systemName: symbol).frame(width: 18).foregroundStyle(theme == .classic ? Color.primary : s.route == route ? theme.palette.accent : .secondary)
         Text(L(name)).lineLimit(1).layoutPriority(1)
         Spacer()
       }
       .padding(.horizontal, 9).frame(height: 29).contentShape(Rectangle())
       .background(
-        s.route == route ? Color.primary.opacity(0.1) : .clear,
+        s.route == route ? (theme == .classic ? Color.primary.opacity(0.1) : theme.palette.accent.opacity(0.2)) : .clear,
         in: RoundedRectangle(cornerRadius: 6))
     }.buttonStyle(.plain)
   }
 }
 struct Expanded: View {
+  @Environment(\.playerTheme) private var theme
   @ObservedObject var s: Session
   var body: some View {
     HStack(spacing: 35) {
       VStack(alignment: .leading, spacing: 12) {
         Text("Now Playing").font(.headline).foregroundStyle(.secondary)
         Cover(track: s.current, size: 250)
-        Text(s.current?.title ?? L("Nothing playing")).font(.title.bold()).lineLimit(2)
+        Text(s.current?.title ?? L("Nothing playing")).font(theme == .classic ? .title.bold() : theme.heading(26)).lineLimit(2)
         Text(s.current?.artist ?? L("Choose a track from your library.")).foregroundStyle(.secondary)
       }.frame(width: 250)
       LyricsView(s: s, head: s.head).frame(maxWidth: .infinity, maxHeight: .infinity)
     }.padding(25).frame(maxWidth: .infinity, maxHeight: .infinity)
       .background { if let url = s.current?.cover { ArtworkWash(url: url) } }
+      .background(ThemePanel())
   }
 }
 struct ArtworkWash: View {

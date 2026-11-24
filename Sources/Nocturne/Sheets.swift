@@ -132,6 +132,8 @@ struct Preferences: View {
   @AppStorage("language") var language = "System"
   @AppStorage("backgroundStamp") var backgroundStamp = 0.0
   @State var launchLanguage = UserDefaults.standard.string(forKey: "language") ?? "System"
+  @AppStorage("homeSuggestions") var homeSuggestions = true
+  @AppStorage("playlistSuggestions") var suggestions = true
   @State var clear = false
   func chooseBackground() {
     let panel = NSOpenPanel()
@@ -177,6 +179,7 @@ struct Preferences: View {
         }
       }
       Section("Appearance") {
+        ThemeChooser()
         Picker("Appearance", selection: $appearance) {
           ForEach(["System", "Dark", "Light"], id: \.self) { Text(L($0)) }
         }
@@ -209,6 +212,8 @@ struct Preferences: View {
         }.disabled(!touch)
       }
       Section("Library") {
+        Toggle("Personalize Home from listening history", isOn: $homeSuggestions)
+        Toggle("Show playlist suggestions", isOn: $suggestions)
         Button("Clear listening history…") { clear = true }.disabled(s.library.history.isEmpty)
         Button("Clear artwork memory cache") { Art.cache.removeAllObjects() }
         Button("Show library storage in Finder") { NSWorkspace.shared.open(Session.directory) }
@@ -223,7 +228,7 @@ struct Preferences: View {
         if let last = s.lastError { Text(last).textSelection(.enabled).font(.caption) }
       }
     }.formStyle(.grouped).frame(width: 475, height: 560)
-      .preferredColorScheme(appearance == "System" ? nil : appearance == "Dark" ? .dark : .light)
+
       .alert("Clear listening history?", isPresented: $clear) {
         Button("Clear", role: .destructive) { s.change { $0.history = [] } }
         Button("Cancel", role: .cancel) {}

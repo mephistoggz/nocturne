@@ -2,19 +2,20 @@ import AVKit
 import SwiftUI
 
 struct Cover: View {
+  @Environment(\.playerTheme) private var theme
   let track: Track?
   let size: CGFloat
   @State private var image: CGImage?
   var body: some View {
     ZStack {
-      Color(white: 0.15)
+      theme.palette.panel
       if let image {
         Image(decorative: image, scale: 1).resizable().scaledToFill()
       } else {
-        Image(systemName: "opticaldisc").font(.system(size: size * 0.44, weight: .ultraLight))
-          .foregroundStyle(.silver)
+        Image(systemName: theme == .classic ? "opticaldisc" : theme.symbol).font(.system(size: size * 0.44, weight: .ultraLight))
+          .foregroundStyle(theme == .classic ? Color(white: 0.76) : theme.palette.accent)
       }
-    }.frame(width: size, height: size).clipShape(RoundedRectangle(cornerRadius: min(12, size / 8)))
+    }.frame(width: size, height: size).clipShape(RoundedRectangle(cornerRadius: min(theme.radius, size / 8)))
       .task(id: track?.cover) {
         image = nil
         let next = await Art.image(track?.cover)
@@ -25,11 +26,12 @@ struct Cover: View {
 /// Content background: the user's picture (Settings → Appearance) under a wash that keeps text readable.
 struct Backdrop: View {
   static let file = Session.directory.appendingPathComponent("Background")
+  @Environment(\.colorScheme) private var scheme
   @AppStorage("backgroundStamp") var stamp = 0.0
-  @Environment(\.colorScheme) var scheme
+  @Environment(\.playerTheme) private var theme
   @State private var image: NSImage?
   var body: some View {
-    let base = scheme == .dark ? Color(white: 0.037) : Color(nsColor: .textBackgroundColor)
+    let base = theme == .classic && scheme == .dark ? Color(white: 0.037) : theme.palette.canvas
     ZStack {
       base
       if let image {
@@ -43,9 +45,6 @@ struct Backdrop: View {
       image = stamp == 0 ? nil : (try? Data(contentsOf: Self.file)).flatMap { NSImage(data: $0) }
     }
   }
-}
-extension ShapeStyle where Self == Color {
-  static var silver: Color { Color(white: 0.76) }
 }
 struct IconButton: View {
   var title: String
@@ -120,6 +119,7 @@ struct Scrubber: View {
   }
 }
 struct Transport: View {
+  @Environment(\.playerTheme) private var theme
   @ObservedObject var s: Session
   var extra = true
   var body: some View {
@@ -139,7 +139,10 @@ struct Transport: View {
         .font(.system(size: 15, weight: .bold)).foregroundStyle(
           Color(nsColor: .windowBackgroundColor)
         )
-        .frame(width: 32, height: 32).background(.primary, in: Circle())
+        .frame(width: 32, height: 32) .background {
+          if theme == .classic { Circle().fill(.primary) }
+          else { RoundedRectangle(cornerRadius: theme == .aero ? 16 : theme.radius).fill(theme.palette.accent) }
+        }
       }.buttonStyle(.plain).help("Play or pause")
       IconButton(title: "Next", symbol: "forward.fill") { s.next() }
       if extra {
@@ -151,8 +154,9 @@ struct Transport: View {
   }
 }
 struct OutputPicker: NSViewRepresentable {
+  let player: AVPlayer
   func makeNSView(context: Context) -> AVRoutePickerView { AVRoutePickerView() }
-  func updateNSView(_ v: AVRoutePickerView, context: Context) { v.player = Session.shared.player }
+  func updateNSView(_ v: AVRoutePickerView, context: Context) { v.player = player }
 }
 struct PlayerBar: View {
   @ObservedObject var s: Session
@@ -178,7 +182,7 @@ struct PlayerBar: View {
         Scrubber(s: s, head: s.head)
       }.frame(minWidth: 190, idealWidth: 245, maxWidth: 290)
       Spacer(minLength: 0)
-      OutputPicker().frame(width: 24, height: 24)
+      OutputPicker(player: s.player).frame(width: 24, height: 24)
       Image(systemName: "speaker.wave.2").foregroundStyle(.secondary)
       Slider(value: $s.volume, in: 0...1).controlSize(.mini).frame(width: 56).accessibilityLabel(
         "Volume"
@@ -190,7 +194,7 @@ struct PlayerBar: View {
         symbol: s.expanded
           ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
       ) { s.expanded.toggle() }
-    }.padding(.horizontal, 18).frame(height: 80).background(.bar)
+    }.padding(.horizontal, 18).frame(height: 80).background(ThemePanel(classicBackground: AnyShapeStyle(.bar)))
   }
 }
 struct QueueView: View {

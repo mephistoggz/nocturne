@@ -5,7 +5,7 @@ import SwiftUI
   @StateObject var s = Session.shared
   @Environment(\.openWindow) var openWindow
   var body: some Scene {
-    Window("NOCTURNE", id: "main") { MainWindow(s: s).background(FrameHook(mini: false)) }
+    Window("NOCTURNE", id: "main") { MainWindow(s: s).background(FrameHook(mini: false)).modifier(ThemeScope()) }
       .defaultSize(width: 1050, height: 690)
       .commands {
         CommandGroup(replacing: .newItem) {
@@ -36,9 +36,9 @@ import SwiftUI
           }.keyboardShortcut("f")
         }
       }
-    Window("Mini Player", id: "mini") { Mini(s: s) }.windowResizability(.contentSize).defaultSize(
+    Window("Mini Player", id: "mini") { Mini(s: s).modifier(ThemeScope()) }.windowResizability(.contentSize).defaultSize(
       width: 360, height: 110)
-    Settings { Preferences(s: s) }
+    Settings { Preferences(s: s).modifier(ThemeScope()) }
   }
 }
 struct FrameHook: NSViewRepresentable {
@@ -75,7 +75,7 @@ struct Mini: View {
         Transport(s: s, extra: false)
       }
       Scrubber(s: s, head: s.head)
-    }.padding(12).frame(minWidth: 320, maxWidth: 520, minHeight: 76, maxHeight: 115).background(
+    }.padding(12).background(ThemePanel()).frame(minWidth: 320, maxWidth: 520, minHeight: 76, maxHeight: 115).background(
       FrameHook(mini: true))
   }
 }

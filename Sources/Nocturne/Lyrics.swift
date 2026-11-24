@@ -68,6 +68,7 @@ enum Lyrics {
 }
 
 struct LyricsView: View {
+  @Environment(\.playerTheme) private var theme
   @ObservedObject var s: Session
   @ObservedObject var head: Playhead
   @State private var lines: [Lyrics.Line]?
@@ -84,7 +85,8 @@ struct LyricsView: View {
           }
           ForEach(lines ?? []) { line in
             let on = line.id == active || line.time == nil
-            Text(line.text).font(.system(size: line.time == nil ? 19 : 27, weight: .bold))
+            Text(line.text).font(theme.heading(line.time == nil ? 19 : 27))
+              .foregroundStyle(theme != .classic && line.time != nil && on ? theme.palette.accent : Color.primary)
               .opacity(on ? 1 : 0.38).blur(radius: on ? 0 : 1.2)
               .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
               .onTapGesture { if let t = line.time { s.seek(t) } }
